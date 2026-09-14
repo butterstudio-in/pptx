@@ -1,0 +1,43 @@
+{
+  "name": "@butterstudio/pptx",
+  "version": "0.1.0",
+  "description": "A headless PPTX engine for parsing, rendering, and inspecting PowerPoint files in JavaScript",
+  "keywords": [
+    "pptx",
+    "powerpoint",
+    "presentation",
+    "slides",
+    "ooxml",
+    "headless",
+    "renderer",
+    "editor"
+  ],
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSES"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "mtx-decompressor": "^1.6.0"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "^0.8.11"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
