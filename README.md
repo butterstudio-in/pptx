@@ -5,16 +5,14 @@ A headless PPTX engine for JavaScript applications. Its public API is designed t
 Today, the package imports PPTX files into serializable Deck JSON and renders individually selectable SVG/DOM objects. Editing and PPTX export are planned capabilities; see [Current scope](#current-scope) for what is available in this release.
 
 ```js
-import { getRequiredFonts, parsePptx, renderSlide, resolveFonts } from '@butterstudio/pptx';
+import { getRequiredFonts, googleFonts, parsePptx, renderSlide, resolveFonts } from '@butterstudio/pptx';
 
 const deck = await parsePptx(await file.arrayBuffer());
 console.log(getRequiredFonts(deck));
 // [{ family, weight, style, text, embedded, ... }]
 const fonts = await resolveFonts(deck, {
-  // Optional. Return bytes, a Blob, data URL, or URL for fonts your app owns.
-  async resolveFont({ family, weight, style }) {
-    return myFontStore.find({ family, weight, style });
-  },
+  // Optional and API-key-free. Embedded fonts still take priority.
+  resolveFont: googleFonts(),
 });
 const view = renderSlide(container, deck, 0, {
   fonts,
@@ -42,9 +40,11 @@ fonts.destroy();
 
 This is a rendering and selection preview. There are **no edit operations, undo/redo, JSON persistence, or PPTX writer yet**. Rendering uses Deck JSON as its input; the application still stores PPTX as its persisted source and reloads JSON when the file revision changes. Keep the original PPTX for export. IDs are stable for the same source objects, not guaranteed across a skill regenerating slides.
 
-Text uses SVG `foreignObject` with DOM runs. Face suffixes such as Regular, SemiBold, Bold and Italic are normalized into CSS family, weight and style fields. Deck JSON contains serializable font requests and recoverable embedded font payloads; the browser-only resolved font session stays separate and is passed to `renderSlide`. The package never contacts a font service.
+Text uses SVG `foreignObject` with DOM runs. Face suffixes such as Regular, SemiBold, Bold and Italic are normalized into CSS family, weight and style fields. Deck JSON contains serializable font requests and recoverable embedded font payloads; the browser-only resolved font session stays separate and is passed to `renderSlide`. The package does not contact a font service unless the consumer explicitly passes a network resolver such as `googleFonts()`.
 
 `getRequiredFonts(deck)` returns one entry for every face used by the presentation. Its `text` field contains each required character once, which lets a consumer request a safe subset without sending the deck's sentences to a font provider. `resolveFonts` uses this same inventory when it calls the consumer resolver.
+
+`googleFonts()` is an optional built-in resolver for the public Google Fonts CSS API. It needs no API key, requests the exact family/weight/style, limits the request to unique characters used by that face, downloads the returned font bytes, and caches results for the resolver's lifetime. The browser must be allowed to connect to `fonts.googleapis.com` and `fonts.gstatic.com`; configure those hosts in your Content Security Policy if necessary. You can pass `signal`, `fetch`, `maxCharacters`, or `cacheSize` options. Applications that cannot send character subsets to Google should instead supply their own `resolveFont` callback.
 
 System font loading is best effort because browsers can restrict local font access. Package consumers can disable it with `useSystemFonts: false`, replace the bundled fallback with `defaultFont`, or supply licensed fonts through `resolveFont`. The bundled fallback is the Latin subset of Poppins Regular under the SIL Open Font License. Missing faces use browser-synthesized weight/style and emit a resolution warning.
 

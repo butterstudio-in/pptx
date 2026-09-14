@@ -58,9 +58,17 @@ export type ResolvedFontSession = {
   familyFor(style: Pick<TextStyle, 'fontId' | 'fontFamily'>): string;
   destroy(): void;
 };
+export type GoogleFontsOptions = {
+  fetch?: typeof fetch;
+  signal?: AbortSignal;
+  cssEndpoint?: string;
+  maxCharacters?: number;
+  cacheSize?: number;
+};
 
 export function fontKey(font: Pick<DeckFont, 'family' | 'weight' | 'style'>): string;
 export function getRequiredFonts(deck: DeckDocument): RequiredFont[];
+export function googleFonts(options?: GoogleFontsOptions): (font: RequiredFont) => Promise<FontSource | null>;
 export function normalizeTypeface(typeface: string, bold?: boolean, italic?: boolean): Omit<DeckFont, 'id' | 'embedded'>;
 export function parsePptx(input: ArrayBuffer | Uint8Array | Blob, options?: { maxBytes?: number; DOMParser?: typeof DOMParser }): Promise<DeckDocument>;
 export function resolveFonts(deck: DeckDocument, options?: {

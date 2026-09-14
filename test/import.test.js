@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DOMParser } from '@xmldom/xmldom';
 import { zipSync, strToU8 } from 'fflate';
-import { getRequiredFonts, normalizeTypeface, parsePptx, resolveFonts } from '../src/index.js';
+import { getRequiredFonts, googleFonts, normalizeTypeface, parsePptx, resolveFonts } from '../src/index.js';
 
 const p = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const a = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -114,6 +114,39 @@ test('resolves fonts in embedded, consumer, system, default order', async () => 
   assert.equal(session.warnings.length, 1);
   session.destroy();
   assert.equal(fontSet.size, 0);
+});
+
+test('Google Fonts resolver requests an exact subset and caches the downloaded face', async () => {
+  const calls = [];
+  const bytes = new Uint8Array([119, 79, 70, 50]);
+  const fetcher = async input => {
+    calls.push(String(input));
+    if (String(input).startsWith('https://fonts.googleapis.com/css2')) {
+      return {
+        ok: true,
+        async text() {
+          return `@font-face { src: url(https://fonts.gstatic.com/l/font.woff2) format('woff2'); }`;
+        },
+      };
+    }
+    return { ok: true, async arrayBuffer() { return bytes.buffer; } };
+  };
+  const resolver = googleFonts({ fetch: fetcher });
+  const request = { family: 'Poppins', weight: 600, style: 'italic', text: 'baab' };
+  const [first, second] = await Promise.all([resolver(request), resolver(request)]);
+
+  assert.equal(calls.length, 2);
+  const cssUrl = new URL(calls[0]);
+  assert.equal(cssUrl.searchParams.get('family'), 'Poppins:ital,wght@1,600');
+  assert.equal(cssUrl.searchParams.get('text'), 'ab');
+  assert.equal(first.format, 'woff2');
+  assert.deepEqual(new Uint8Array(first.data), bytes);
+  assert.equal(second, first);
+});
+
+test('Google Fonts resolver returns null when a requested face is unavailable', async () => {
+  const resolver = googleFonts({ fetch: async () => ({ ok: false }) });
+  assert.equal(await resolver({ family: 'Missing Face', weight: 400, style: 'normal', text: 'Hi' }), null);
 });
 
 test('rejects excessive inputs, non-presentations and XML entity declarations', async () => {
