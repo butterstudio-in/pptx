@@ -1,8 +1,16 @@
 {
   "name": "@butterstudio/pptx",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "A headless PPTX engine for parsing, rendering, and inspecting PowerPoint files in JavaScript",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/butterstudio-in/pptx.git"
+  },
+  "homepage": "https://github.com/butterstudio-in/pptx#readme",
+  "bugs": {
+    "url": "https://github.com/butterstudio-in/pptx/issues"
+  },
   "keywords": [
     "pptx",
     "powerpoint",
