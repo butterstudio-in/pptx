@@ -116,7 +116,7 @@ export async function resolveFonts(deck, options = {}) {
   const loadedFaces = [];
   let defaultFace;
   let defaultPromise;
-  const defaultAlias = options.defaultFontFamily ?? 'AI Deck Default';
+  const defaultAlias = options.defaultFontFamily ?? 'PPTX Fallback';
 
   async function loadDefault() {
     if (!defaultPromise) {
@@ -132,7 +132,7 @@ export async function resolveFonts(deck, options = {}) {
 
   await Promise.all(getRequiredFonts(deck).map(async request => {
     const key = request.id ?? fontKey(request);
-    const alias = `aideck-${hash(key)}`;
+    const alias = `pptx-${hash(key)}`;
     let face;
     let source;
     let detail;
