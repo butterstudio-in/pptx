@@ -33,8 +33,24 @@ export type TableElement = BaseElement & { type: 'table'; columns: number[]; row
 export type DeckElement = ShapeElement | ImageElement | TableElement | (BaseElement & { type: 'unsupported'; reason: string });
 export type DeckSlide = { id: string; sourcePart: string; background: string; elements: DeckElement[] };
 export type DeckWarning = { slideId?: string; elementId?: string; message: string };
-export type DeckDocument = { version: 2; width: number; height: number; slides: DeckSlide[]; assets: Record<string, { id: string; mimeType: string; dataUrl: string }>; fonts: DeckFont[]; warnings: DeckWarning[] };
-export type Selection = { slideId: string; elementId: string; cellId?: string; row?: number; column?: number; type: string; name: string; text: string };
+export type ImageProvenance = { kind: 'ai-generated' | 'uploaded' | string; provider?: string; requestedModel?: string; resolvedModel?: string; originalPrompt?: string; currentPrompt?: string; revisedPrompt?: string | null; purpose?: string; generatedAt?: string; history?: { prompt?: string; requestedModel?: string; resolvedModel?: string; generatedAt?: string }[] };
+export type DeckAsset = { id: string; mimeType: string; dataUrl: string; url?: string; width?: number; height?: number; contentHash?: string; provenance?: ImageProvenance };
+export type DeckDocument = { version: 2; width: number; height: number; slides: DeckSlide[]; assets: Record<string, DeckAsset>; fonts: DeckFont[]; warnings: DeckWarning[] };
+export type Selection = { slideId: string; elementId: string; sourceId?: string; cellId?: string; row?: number; column?: number; type: string; name: string; text: string; frame?: ElementFrame; asset?: Omit<DeckAsset, 'dataUrl'> };
+export type ElementFrame = Pick<Frame, 'x' | 'y' | 'width' | 'height' | 'rotation' | 'flipH' | 'flipV'>;
+export type DeckEditOperation =
+  | { type: 'setText'; slideId: string; elementId: string; cellId?: string; text: string }
+  | { type: 'setTextStyle'; slideId: string; elementId: string; cellId?: string; style: Partial<Pick<TextStyle, 'fontFamily' | 'fontSize' | 'color' | 'bold' | 'italic' | 'underline'>> }
+  | { type: 'setFrame'; slideId: string; elementId: string; frame: Partial<ElementFrame> }
+  | { type: 'setShapeStyle'; slideId: string; elementId: string; style: Partial<Pick<ShapeElement, 'fill' | 'stroke' | 'strokeWidth'>> }
+  | { type: 'alignElements'; slideId: string; elementIds: string[]; alignment?: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'; distribution?: 'none' | 'horizontal' | 'vertical' }
+  | { type: 'replaceImage'; slideId: string; elementId: string; asset: DeckDocument['assets'][string] };
+export type PptxEditingSession = {
+  readonly deck: DeckDocument;
+  readonly revision: string;
+  applyOperations(operations: DeckEditOperation[]): { deck: DeckDocument; inverseOperations: DeckEditOperation[] };
+  exportPptx(): Promise<{ data: Uint8Array; deck: DeckDocument; inverseOperations: DeckEditOperation[]; changedParts: string[] }>;
+};
 
 export type FontSource = {
   data?: ArrayBuffer | ArrayBufferView | Blob;
@@ -71,6 +87,7 @@ export function getRequiredFonts(deck: DeckDocument): RequiredFont[];
 export function googleFonts(options?: GoogleFontsOptions): (font: RequiredFont) => Promise<FontSource | null>;
 export function normalizeTypeface(typeface: string, bold?: boolean, italic?: boolean): Omit<DeckFont, 'id' | 'embedded'>;
 export function parsePptx(input: ArrayBuffer | Uint8Array | Blob, options?: { maxBytes?: number; DOMParser?: typeof DOMParser }): Promise<DeckDocument>;
+export function openPptx(input: ArrayBuffer | Uint8Array | Blob, options?: { maxBytes?: number; DOMParser?: typeof DOMParser; XMLSerializer?: typeof XMLSerializer; deck?: DeckDocument }): Promise<PptxEditingSession>;
 export function resolveFonts(deck: DeckDocument, options?: {
   resolveFont?: (font: RequiredFont) => FontSource | string | null | undefined | Promise<FontSource | string | null | undefined>;
   useSystemFonts?: boolean;

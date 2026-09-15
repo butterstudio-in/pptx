@@ -84,8 +84,13 @@ export function renderSlide(container, deck, slideIndex, options = {}) {
     options.onSelectionChange?.([...selected].map(id => {
       const { element, cell } = targets.get(id);
       return { slideId: slide.id, elementId: element.id, ...(cell ? { cellId: cell.id, row: cell.row, column: cell.column } : {}),
+        sourceId: element.sourceId,
         type: cell ? 'cell' : element.type, name: cell ? `${element.name}, row ${cell.row + 1}, column ${cell.column + 1}` : element.name,
-        text: textContent(cell ?? element) };
+        text: textContent(cell ?? element),
+        frame: { x: element.x, y: element.y, width: element.width, height: element.height, rotation: element.rotation, flipH: element.flipH, flipV: element.flipV },
+        ...(element.type === 'image' && deck.assets[element.assetId]
+          ? { asset: Object.fromEntries(Object.entries(deck.assets[element.assetId]).filter(([key]) => key !== 'dataUrl')) }
+          : {}) };
     }));
   };
   function target(node, element, transform, cell) {

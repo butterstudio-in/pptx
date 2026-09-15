@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { DOMParser } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { zipSync, strToU8 } from 'fflate';
-import { getRequiredFonts, googleFonts, normalizeTypeface, parsePptx, resolveFonts } from '../src/index.js';
+import { getRequiredFonts, googleFonts, normalizeTypeface, openPptx, parsePptx, resolveFonts } from '../src/index.js';
 
 const p = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const a = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -147,6 +147,46 @@ test('Google Fonts resolver requests an exact subset and caches the downloaded f
 test('Google Fonts resolver returns null when a requested face is unavailable', async () => {
   const resolver = googleFonts({ fetch: async () => ({ ok: false }) });
   assert.equal(await resolver({ family: 'Missing Face', weight: 400, style: 'normal', text: 'Hi' }), null);
+});
+
+test('editing session applies typed operations and patches the targeted slide XML', async () => {
+  const session = await openPptx(fixture(), { DOMParser, XMLSerializer });
+  const selected = session.deck.slides[0].elements[0];
+  const result = session.applyOperations([
+    { type: 'setText', slideId: session.deck.slides[0].id, elementId: selected.id, text: 'Short title' },
+    { type: 'setFrame', slideId: session.deck.slides[0].id, elementId: selected.id, frame: { x: 42, y: 33 } },
+  ]);
+  assert.equal(result.deck.slides[0].elements[0].text.paragraphs[0].runs[0].text, 'Short title');
+  assert.equal(result.deck.slides[0].elements[0].x, 42);
+  const exported = await session.exportPptx();
+  assert.deepEqual(exported.changedParts, ['ppt/slides/slide2.xml']);
+  const reparsed = await parsePptx(exported.data, { DOMParser });
+  assert.equal(reparsed.slides[0].elements[0].text.paragraphs[0].runs.map(run => run.text).join(''), 'Short title');
+  assert.equal(reparsed.slides[0].elements[0].x, 42);
+  assert.equal(reparsed.slides[0].elements[0].y, 33);
+});
+
+test('editing session replaces an image and returns a usable inverse operation', async () => {
+  const picture = `<p:pic><p:nvPicPr><p:cNvPr id="8" name="Hero image"/></p:nvPicPr><p:blipFill><a:blip r:embed="img1"/></p:blipFill><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm></p:spPr></p:pic>`;
+  const input = fixture({
+    '[Content_Types].xml': `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="png" ContentType="image/png"/></Types>`,
+    'ppt/slides/slide2.xml': `<p:sld xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${r}"><p:cSld><p:spTree>${picture}</p:spTree></p:cSld></p:sld>`,
+    'ppt/slides/_rels/slide2.xml.rels': relationships(rel('layout', '../slideLayouts/slideLayout1.xml', 'slideLayout') + rel('img1', '../media/original.png', 'image')),
+    'ppt/media/original.png': new Uint8Array([137, 80, 78, 71]),
+  });
+  const savedDeck = await parsePptx(input, { DOMParser });
+  savedDeck.assets['ppt/media/original.png'].provenance = { kind: 'ai-generated', originalPrompt: 'Original scene' };
+  const session = await openPptx(input, { DOMParser, XMLSerializer, deck: savedDeck });
+  assert.equal(session.deck.assets['ppt/media/original.png'].provenance.originalPrompt, 'Original scene');
+  const image = session.deck.slides[0].elements[0];
+  const replacement = { id: 'asset-new', mimeType: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+  const applied = session.applyOperations([{ type: 'replaceImage', slideId: session.deck.slides[0].id, elementId: image.id, asset: replacement }]);
+  assert.equal(applied.deck.slides[0].elements[0].assetId, replacement.id);
+  assert.equal(applied.inverseOperations[0].asset.id, 'ppt/media/original.png');
+  const exported = await session.exportPptx();
+  assert.ok(exported.changedParts.some(part => part.includes('_rels/slide2.xml.rels')));
+  const reparsed = await parsePptx(exported.data, { DOMParser });
+  assert.equal(reparsed.slides[0].elements[0].assetId, 'ppt/media/butterstudio-image-1.png');
 });
 
 test('rejects excessive inputs, non-presentations and XML entity declarations', async () => {
