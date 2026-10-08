@@ -1,6 +1,6 @@
 {
   "name": "@butterstudio/pptx",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "A headless PPTX engine for parsing, selectable rendering, targeted editing, and PowerPoint export in JavaScript",
   "license": "MIT",
   "repository": {
