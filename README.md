@@ -274,6 +274,7 @@ The package returns inverse operations but deliberately does not own storage, re
 - Font resolution in this order: recoverable fonts embedded in the PPTX, a consumer callback, locally installed fonts through CSS `local()`, then the bundled fallback font.
 - Rectangles, rounded rectangles, ellipses and lines with solid fills/strokes.
 - Embedded PNG/JPEG/GIF/WebP media, shared asset references, cropping, rotation and flipping.
+- Inherited slide-layout/master raster backgrounds and basic non-placeholder shapes/images, rendered in source layer order and locked against editing.
 - Tables with individually selectable cells, explicit dimensions, padding, fills and borders.
 - Single selection, Shift/Ctrl/Command multi-selection, Enter/Space selection and Escape clearing. Full-slide bottommost pictures are locked as backgrounds.
 - Unsupported objects become labelled placeholders and import warnings.
@@ -290,7 +291,7 @@ System font loading is best effort because browsers can restrict local font acce
 
 PowerPoint often stores embedded fonts as EOT. Bare OpenType, WOFF/WOFF2, obfuscated OpenType and EOT payloads are supported, including MicroType Express compression. Invalid or browser-incompatible embedded data produces an import warning and continues through the resolver/system/default chain. Natural font metrics, wrapping and automatic box growth remain approximate; `spAutoFit` is retained but this release keeps source geometry rather than implementing PowerPoint's layout engine.
 
-Not implemented for editing: adding/removing/reordering slides or objects, charts, SmartArt, groups, custom geometry, OLE, video/audio, animations, complex effects, master/layout graphics, merged tables, and theme table styles. Unsupported OOXML is retained in the source package when other objects are edited, but it is not represented completely in Deck JSON. Warnings cover unsupported objects and selected visual features, not every possible OOXML extension.
+Not implemented for editing: adding/removing/reordering slides or objects, charts, SmartArt, groups, custom geometry, OLE, video/audio, animations, complex effects, inherited master/layout graphics, merged tables, and theme table styles. Unsupported OOXML is retained in the source package when other objects are edited, but it is not represented completely in Deck JSON. Warnings cover unsupported objects and selected visual features, not every possible OOXML extension.
 
 Inputs are limited to 50 MB compressed / 200 MB expanded / 10,000 ZIP entries. External relationships are not fetched, XML entities are rejected, and document text is assigned through `textContent`. Parsing currently runs on the main thread; a worker is a future performance improvement for larger decks.
 

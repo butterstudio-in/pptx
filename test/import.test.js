@@ -30,9 +30,53 @@ test('uses relationship slide order and scopes object IDs to each slide', async 
   const d = await parsePptx(fixture(), { DOMParser });
   assert.equal(d.width, 1280);
   assert.equal(d.height, 720);
+  assert.ok(d.capabilities.includes('inherited-layout-objects'));
   assert.deepEqual(d.slides.map(s => s.sourcePart), ['ppt/slides/slide2.xml', 'ppt/slides/slide1.xml']);
   assert.notEqual(d.slides[0].elements[0].id, d.slides[1].elements[0].id);
   assert.deepEqual(JSON.parse(JSON.stringify(d)), d);
+});
+
+test('renders image backgrounds and locked objects inherited from layouts and masters', async () => {
+  const inheritedShape = (id, name, color, alpha = '') => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="12192000" cy="6858000"/></a:xfrm><a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="${color}">${alpha ? `<a:alpha val="${alpha}"/>` : ''}</a:srgbClr></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr></p:sp>`;
+  const placeholder = `<p:sp><p:nvSpPr><p:cNvPr id="30" name="Layout placeholder"/><p:cNvSpPr/><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>`;
+  const overrides = {
+    'ppt/slideLayouts/slideLayout1.xml': `<p:sldLayout xmlns:p="${p}" xmlns:a="${a}" xmlns:r="${r}"><p:cSld><p:bg><p:bgPr><a:blipFill><a:blip r:embed="bg"/><a:stretch><a:fillRect/></a:stretch></a:blipFill></p:bgPr></p:bg><p:spTree>${inheritedShape(20, 'Layout overlay', '0A1A33', '62000')}${placeholder}</p:spTree></p:cSld></p:sldLayout>`,
+    'ppt/slideLayouts/_rels/slideLayout1.xml.rels': relationships(rel('bg', '../media/layout-bg.jpg', 'image') + rel('master', '../slideMasters/slideMaster1.xml', 'slideMaster')),
+    'ppt/slideMasters/slideMaster1.xml': `<p:sldMaster xmlns:p="${p}" xmlns:a="${a}"><p:cSld><p:spTree>${inheritedShape(10, 'Master mark', 'EE2F49')}</p:spTree></p:cSld><p:txStyles><p:otherStyle><a:lvl1pPr/></p:otherStyle></p:txStyles></p:sldMaster>`,
+    'ppt/media/layout-bg.jpg': new Uint8Array([255, 216, 255, 217]),
+  };
+  const d = await parsePptx(fixture(overrides), { DOMParser });
+  const slide = d.slides[0];
+  assert.equal(slide.background, '#ffffff');
+  assert.deepEqual(slide.elements.map(element => element.name), ['Layout background', 'Master mark', 'Layout overlay', 'Title']);
+  assert.deepEqual(slide.elements.map(element => element.locked), [true, true, true, false]);
+  assert.equal(slide.elements[0].type, 'image');
+  assert.equal(slide.elements[0].role, 'background');
+  assert.equal(slide.elements[0].assetId, 'ppt/media/layout-bg.jpg');
+  assert.equal(slide.elements[0].sourcePart, 'ppt/slideLayouts/slideLayout1.xml');
+  assert.equal(d.assets['ppt/media/layout-bg.jpg'].mimeType, 'image/jpeg');
+  assert.equal(slide.elements[2].fill, 'rgba(10,26,51,0.62)');
+  assert.equal(slide.elements.some(element => element.name === 'Layout placeholder'), false);
+  assert.equal(d.warnings.some(warning => warning.message.includes('layout objects')), false);
+
+  const withoutMaster = await parsePptx(fixture({
+    ...overrides,
+    'ppt/slides/slide2.xml': `<p:sld xmlns:p="${p}" xmlns:a="${a}" showMasterSp="0"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id="7" name="Slide object"/><p:cNvSpPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm><a:prstGeom prst="rect"/></p:spPr></p:sp></p:spTree></p:cSld></p:sld>`,
+  }), { DOMParser });
+  assert.deepEqual(withoutMaster.slides[0].elements.map(element => element.name), ['Layout background', 'Layout overlay', 'Slide object']);
+});
+
+test('rejects edit operations that target inherited locked objects', async () => {
+  const layoutShape = `<p:sp><p:nvSpPr><p:cNvPr id="20" name="Layout decoration"/><p:cNvSpPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm><a:prstGeom prst="rect"/></p:spPr></p:sp>`;
+  const input = fixture({
+    'ppt/slideLayouts/slideLayout1.xml': `<p:sldLayout xmlns:p="${p}" xmlns:a="${a}"><p:cSld><p:spTree>${layoutShape}</p:spTree></p:cSld></p:sldLayout>`,
+  });
+  const session = await openPptx(input, { DOMParser, XMLSerializer });
+  const inherited = session.deck.slides[0].elements.find(element => element.name === 'Layout decoration');
+  assert.equal(inherited.locked, true);
+  assert.throws(() => session.applyOperations([
+    { type: 'setFrame', slideId: session.deck.slides[0].id, elementId: inherited.id, frame: { x: 10 } },
+  ]), /locked/);
 });
 
 test('free text uses local list/run styles without inheriting placeholder bullets', async () => {

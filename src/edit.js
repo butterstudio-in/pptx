@@ -49,6 +49,7 @@ function target(deck, operation) {
   if (!slide) throw new Error(`Slide ${operation.slideId} does not exist.`);
   const element = slide.elements.find(item => item.id === operation.elementId);
   if (!element) throw new Error(`Element ${operation.elementId} does not exist on ${operation.slideId}.`);
+  if (element.locked) throw new Error(`Element ${operation.elementId} is inherited or locked and cannot be edited.`);
   let cell;
   if (operation.cellId) {
     if (element.type !== 'table') throw new Error('cellId can only target a table.');
@@ -71,6 +72,7 @@ function applyOne(deck, operation) {
     if (ids.length < 2) throw new Error('alignElements requires at least two elements.');
     const targets = ids.map(id => slide.elements.find(item => item.id === id));
     if (targets.some(item => !item)) throw new Error('One or more alignment targets do not exist.');
+    if (targets.some(item => item.locked)) throw new Error('Locked elements cannot be aligned or distributed.');
     const inverse = targets.map(element => ({ type: 'setFrame', slideId: slide.id, elementId: element.id, frame: frameOf(element) }));
     const alignment = operation.alignment;
     if (alignment) {

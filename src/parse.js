@@ -111,7 +111,7 @@ export async function parsePptx(input, options = {}) {
   const presentation = xml('ppt/presentation.xml');
   if (!presentation) throw new Error('This file is not an OOXML presentation.');
   const size = child(presentation, 'sldSz');
-  const deck = { version: 2, width: px(attr(size, 'cx')), height: px(attr(size, 'cy')), slides: [], assets: {}, fonts: [], warnings: [] };
+  const deck = { version: 2, capabilities: ['inherited-layout-objects'], width: px(attr(size, 'cx')), height: px(attr(size, 'cy')), slides: [], assets: {}, fonts: [], warnings: [] };
   if (!deck.width || !deck.height) throw new Error('Presentation has no valid slide size.');
   const fonts = new Map();
   const warn = (slideId, message, elementId) => deck.warnings.push({ slideId, elementId, message });
@@ -149,9 +149,11 @@ export async function parsePptx(input, options = {}) {
     const related = (rs, type) => Object.values(rs).find(r => r.type === type && !r.external)?.target;
     const layoutPart = related(rels, 'slideLayout');
     const layout = xml(layoutPart);
-    const masterPart = layoutPart && related(relationships(layoutPart), 'slideMaster');
+    const layoutRels = layoutPart ? relationships(layoutPart) : {};
+    const masterPart = related(layoutRels, 'slideMaster');
     const master = xml(masterPart);
-    const themePart = masterPart && related(relationships(masterPart), 'theme');
+    const masterRels = masterPart ? relationships(masterPart) : {};
+    const themePart = related(masterRels, 'theme');
     const theme = xml(themePart ?? related(presRels, 'theme'));
     const colors = {};
     for (const c of children(find(theme, 'clrScheme'))) colors[c.localName] = attr(children(c)[0], 'val', attr(children(c)[0], 'lastClr', '000000'));
@@ -264,75 +266,111 @@ export async function parsePptx(input, options = {}) {
       }
       return path;
     }
-    const bg = child(child(root, 'cSld'), 'bg') ?? child(child(layout, 'cSld'), 'bg') ?? child(child(master, 'cSld'), 'bg');
-    const slide = { id: slideId, sourcePart: part, background: fill(child(bg, 'bgPr'), '#ffffff'), elements: [] };
-    for (const el of children(child(child(root, 'cSld'), 'spTree'))) {
-      if (!['sp', 'pic', 'graphicFrame', 'grpSp', 'cxnSp'].includes(el.localName)) continue;
-      const nv = find(el, 'cNvPr');
-      const id = `${slideId}/object-${attr(nv, 'id', slide.elements.length)}`;
-      const base = { id, name: attr(nv, 'name', 'Object'), sourceId: attr(nv, 'id'), ...frame(el), locked: false };
-      const sp = child(el, 'spPr');
-      let element;
-      if (el.localName === 'pic') {
-        const blipFill = child(el, 'blipFill');
-        const blip = child(blipFill, 'blip');
-        const rid = blip?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
-        const rel = rels[rid];
-        const assetId = rel && !rel.external && asset(rel.target);
+    const backgroundSources = [
+      { root, part, rels, label: 'slide' },
+      { root: layout, part: layoutPart, rels: layoutRels, label: 'layout' },
+      { root: master, part: masterPart, rels: masterRels, label: 'master' },
+    ];
+    let background = '#ffffff';
+    let backgroundImage;
+    for (const source of backgroundSources) {
+      const bg = child(child(source.root, 'cSld'), 'bg');
+      if (!bg) continue;
+      const bgPr = child(bg, 'bgPr');
+      background = fill(bgPr, '#ffffff');
+      const blipFill = child(bgPr, 'blipFill');
+      const blip = child(blipFill, 'blip');
+      const rid = blip?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
+      const relation = source.rels[rid];
+      const assetId = relation && !relation.external && asset(relation.target);
+      if (assetId) {
         const crop = child(blipFill, 'srcRect');
-        if (assetId) element = { ...base, type: 'image', assetId,
-          crop: Object.fromEntries(['l', 't', 'r', 'b'].map(k => [k, Number(attr(crop, k, 0)) / 100000])) };
-      } else if (el.localName === 'sp' || el.localName === 'cxnSp') {
-        const geometry = attr(child(sp, 'prstGeom'), 'prst', el.localName === 'cxnSp' ? 'line' : 'rect');
-        if (['rect', 'roundRect', 'ellipse', 'line'].includes(geometry) && !child(sp, 'custGeom')) {
-          const ph = find(el, 'ph');
-          const isTextBox = attr(find(el, 'cNvSpPr'), 'txBox') === '1';
-          // Free text boxes inherit presentation defaults. Placeholder master styles
-          // would incorrectly add the master's body bullets or shape alignment.
-          const textStyle = ['title', 'ctrTitle'].includes(attr(ph, 'type')) ? 'titleStyle' : ph ? 'bodyStyle' : isTextBox ? null : 'otherStyle';
-          const text = textBody(child(el, 'txBody'), [presStyle, textStyle ? child(child(master, 'txStyles'), textStyle) : null]);
-          const hasText = text?.paragraphs.some(p => p.runs.some(r => r.text));
-          const line = child(sp, 'ln');
-          const adjust = child(child(child(sp, 'prstGeom'), 'avLst'), 'gd');
-          element = { ...base, type: attr(find(el, 'cNvSpPr'), 'txBox') === '1' ? 'text' : 'shape', geometry,
-            fill: fill(sp), stroke: fill(line), strokeWidth: px(attr(line, 'w'), 1.333),
-            radius: Math.min(base.width, base.height) * Number(attr(adjust, 'fmla', 'val 16667').split(' ').pop()) / 100000,
-            text: hasText ? text : undefined };
-        }
-      } else if (el.localName === 'graphicFrame' && find(el, 'tbl')) {
-        const tbl = find(el, 'tbl');
-        const columns = children(child(tbl, 'tblGrid'), 'gridCol').map(c => px(attr(c, 'w')));
-        const rows = children(tbl, 'tr').map(r => px(attr(r, 'h')));
-        let y = 0;
-        const cells = [];
-        for (const [ri, row] of children(tbl, 'tr').entries()) {
-          let x = 0;
-          for (const [ci, cell] of children(row, 'tc').entries()) {
-            const cp = child(cell, 'tcPr');
-            if (['gridSpan', 'rowSpan', 'hMerge', 'vMerge'].some(k => cell.hasAttribute(k))) warn(slideId, 'Merged table cells are approximated.', id);
-            cells.push({ id: `${id}/cell-${ri}-${ci}`, row: ri, column: ci, x, y, width: columns[ci], height: rows[ri], fill: fill(cp, '#ffffff'),
-              borders: Object.fromEntries(['L', 'R', 'T', 'B'].map(side => { const line = child(cp, `ln${side}`); return [side, { color: fill(line), width: px(attr(line, 'w'), 1.333) }]; })),
-              text: textBody(child(cell, 'txBody'), [presStyle], cp) });
-            x += columns[ci];
+        backgroundImage = {
+          id: `${slideId}/${source.label}-background`, name: `${source.label[0].toUpperCase()}${source.label.slice(1)} background`,
+          sourceId: 'background', sourcePart: source.part, x: 0, y: 0, width: deck.width, height: deck.height,
+          rotation: 0, flipH: false, flipV: false, locked: true, role: 'background', type: 'image', assetId,
+          crop: Object.fromEntries(['l', 't', 'r', 'b'].map(k => [k, Number(attr(crop, k, 0)) / 100000])),
+        };
+        if (child(blipFill, 'tile')) warn(slideId, 'Tiled background images are stretched in the preview.', backgroundImage.id);
+      }
+      break;
+    }
+    const slide = { id: slideId, sourcePart: part, background, elements: backgroundImage ? [backgroundImage] : [] };
+
+    function parsedElements(source, sourcePart, sourceRels, label, locked) {
+      const result = [];
+      for (const el of children(child(child(source, 'cSld'), 'spTree'))) {
+        if (!['sp', 'pic', 'graphicFrame', 'grpSp', 'cxnSp'].includes(el.localName)) continue;
+        if (locked && find(el, 'ph')) continue;
+        const nv = find(el, 'cNvPr');
+        const sourceId = attr(nv, 'id', result.length);
+        const id = locked ? `${slideId}/${label}-object-${sourceId}` : `${slideId}/object-${sourceId}`;
+        const base = { id, name: attr(nv, 'name', 'Object'), sourceId, sourcePart, ...frame(el), locked };
+        const sp = child(el, 'spPr');
+        let element;
+        if (el.localName === 'pic') {
+          const blipFill = child(el, 'blipFill');
+          const blip = child(blipFill, 'blip');
+          const rid = blip?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
+          const rel = sourceRels[rid];
+          const assetId = rel && !rel.external && asset(rel.target);
+          const crop = child(blipFill, 'srcRect');
+          if (assetId) element = { ...base, type: 'image', assetId,
+            crop: Object.fromEntries(['l', 't', 'r', 'b'].map(k => [k, Number(attr(crop, k, 0)) / 100000])) };
+        } else if (el.localName === 'sp' || el.localName === 'cxnSp') {
+          const geometry = attr(child(sp, 'prstGeom'), 'prst', el.localName === 'cxnSp' ? 'line' : 'rect');
+          if (['rect', 'roundRect', 'ellipse', 'line'].includes(geometry) && !child(sp, 'custGeom')) {
+            const ph = find(el, 'ph');
+            const isTextBox = attr(find(el, 'cNvSpPr'), 'txBox') === '1';
+            // Free text boxes inherit presentation defaults. Placeholder master styles
+            // would incorrectly add the master's body bullets or shape alignment.
+            const textStyle = ['title', 'ctrTitle'].includes(attr(ph, 'type')) ? 'titleStyle' : ph ? 'bodyStyle' : isTextBox ? null : 'otherStyle';
+            const text = textBody(child(el, 'txBody'), [presStyle, textStyle ? child(child(master, 'txStyles'), textStyle) : null]);
+            const hasText = text?.paragraphs.some(p => p.runs.some(r => r.text));
+            const line = child(sp, 'ln');
+            const adjust = child(child(child(sp, 'prstGeom'), 'avLst'), 'gd');
+            element = { ...base, type: attr(find(el, 'cNvSpPr'), 'txBox') === '1' ? 'text' : 'shape', geometry,
+              fill: fill(sp), stroke: fill(line), strokeWidth: px(attr(line, 'w'), 1.333),
+              radius: Math.min(base.width, base.height) * Number(attr(adjust, 'fmla', 'val 16667').split(' ').pop()) / 100000,
+              text: hasText ? text : undefined };
           }
-          y += rows[ri];
+        } else if (el.localName === 'graphicFrame' && find(el, 'tbl')) {
+          const tbl = find(el, 'tbl');
+          const columns = children(child(tbl, 'tblGrid'), 'gridCol').map(c => px(attr(c, 'w')));
+          const rows = children(tbl, 'tr').map(r => px(attr(r, 'h')));
+          let y = 0;
+          const cells = [];
+          for (const [ri, row] of children(tbl, 'tr').entries()) {
+            let x = 0;
+            for (const [ci, cell] of children(row, 'tc').entries()) {
+              const cp = child(cell, 'tcPr');
+              if (['gridSpan', 'rowSpan', 'hMerge', 'vMerge'].some(k => cell.hasAttribute(k))) warn(slideId, 'Merged table cells are approximated.', id);
+              cells.push({ id: `${id}/cell-${ri}-${ci}`, row: ri, column: ci, x, y, width: columns[ci], height: rows[ri], fill: fill(cp, '#ffffff'),
+                borders: Object.fromEntries(['L', 'R', 'T', 'B'].map(side => { const line = child(cp, `ln${side}`); return [side, { color: fill(line), width: px(attr(line, 'w'), 1.333) }]; })),
+                text: textBody(child(cell, 'txBody'), [presStyle], cp) });
+              x += columns[ci];
+            }
+            y += rows[ri];
+          }
+          element = { ...base, type: 'table', columns, rows, cells };
         }
-        element = { ...base, type: 'table', columns, rows, cells };
+        if (!element) {
+          element = { ...base, type: 'unsupported', reason: `Unsupported ${el.localName} object` };
+          warn(slideId, element.reason, id);
+        }
+        if (find(el, 'gradFill') || find(el, 'outerShdw') || find(el, 'scene3d')) warn(slideId, 'Some visual effects are not rendered.', id);
+        if (!locked && element.type === 'image' && result.length === 0 && !backgroundImage && Math.abs(base.x) < 1 && Math.abs(base.y) < 1 && Math.abs(base.width - deck.width) < 2 && Math.abs(base.height - deck.height) < 2) {
+          element.role = 'background'; element.locked = true;
+        }
+        result.push(element);
       }
-      if (!element) {
-        element = { ...base, type: 'unsupported', reason: `Unsupported ${el.localName} object` };
-        warn(slideId, element.reason, id);
-      }
-      if (find(el, 'gradFill') || find(el, 'outerShdw') || find(el, 'scene3d')) warn(slideId, 'Some visual effects are not rendered.', id);
-      if (element.type === 'image' && slide.elements.length === 0 && Math.abs(base.x) < 1 && Math.abs(base.y) < 1 && Math.abs(base.width - deck.width) < 2 && Math.abs(base.height - deck.height) < 2) {
-        element.role = 'background'; element.locked = true;
-      }
-      slide.elements.push(element);
+      return result;
     }
-    for (const [source, label] of [[master, 'master'], [layout, 'layout']]) {
-      const inherited = children(child(child(source, 'cSld'), 'spTree')).filter(e => ['sp', 'pic', 'grpSp', 'graphicFrame'].includes(e.localName) && !find(e, 'ph'));
-      if (inherited.length && attr(root, 'showMasterSp') !== '0') warn(slideId, `Visible ${label} objects are not yet rendered.`);
-    }
+
+    const showMasterShapes = attr(root, 'showMasterSp', '1') !== '0' && attr(layout, 'showMasterSp', '1') !== '0';
+    if (showMasterShapes) slide.elements.push(...parsedElements(master, masterPart, masterRels, 'master', true));
+    slide.elements.push(...parsedElements(layout, layoutPart, layoutRels, 'layout', true));
+    slide.elements.push(...parsedElements(root, part, rels, 'slide', false));
     if (find(root, 'timing')) warn(slideId, 'Animations are not rendered.');
     deck.slides.push(slide);
   }
